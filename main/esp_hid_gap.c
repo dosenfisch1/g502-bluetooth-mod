@@ -575,10 +575,12 @@ static void ble_gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_p
 
             esp_ble_conn_update_params_t cp = {0};
             memcpy(cp.bda, param->ble_security.auth_cmpl.bd_addr, sizeof(esp_bd_addr_t));
-            cp.min_int = 0x06;
-            cp.max_int = 0x0C;
+
+            cp.min_int = 0x06;   // 7,5 ms
+            cp.max_int = 0x08;   // 10 ms (vorher 0x0C = 15 ms)
             cp.latency = 4;
             cp.timeout = 400;
+
             esp_err_t ret = esp_ble_gap_update_conn_params(&cp);
             if (ret != ESP_OK) {
                 ESP_LOGE(TAG, "esp_ble_gap_update_conn_params failed: %s", esp_err_to_name(ret));
@@ -682,7 +684,8 @@ esp_err_t esp_hid_ble_gap_adv_init(uint16_t appearance, const char *device_name)
         .include_name = true,
         .include_txpower = true,
         .min_interval = 0x0006, //slave connection min interval, Time = min_interval * 1.25 msec
-        .max_interval = 0x0010, //slave connection max interval, Time = max_interval * 1.25 msec
+        .max_interval = 0x0008,
+        //.max_interval = 0x0010, //slave connection max interval, Time = max_interval * 1.25 msec
         .appearance = appearance,
         .manufacturer_len = 0,
         .p_manufacturer_data =  NULL,

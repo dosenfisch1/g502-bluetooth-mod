@@ -3,8 +3,8 @@
  *
  * - ESP32-S3 arbeitet als USB-Host ueber den internen PHY
  *   (fest verdrahtet: GPIO19 = D-, GPIO20 = D+, nicht aenderbar)
- * - Es wird nur das Maus-Interface der G502 geoeffnet (Report-Protokoll,
- *   16 Buttons, 16-Bit X/Y, Wheel, AC-Pan = 8 Byte pro Report)
+ * - Maus-Interface der G502 liefert (laut Log) 4-Byte-Reports:
+ *   Buttons(1 Byte), X, Y, Wheel (je int8). Kein Pan-Feld -> Tilt kommt anders an.
  * - Bewegungen werden gesammelt und alle 8 ms als ein BLE-Report gesendet
  *   (BLE schafft nicht 1000 Hz, daher Aufsummieren statt Verwerfen)
  *
@@ -38,6 +38,32 @@ static const char *TAG = "G502_BLE";
 #define SEND_INTERVAL_MS 8
 #define BLE_REPORT_ID    1
 #define KBD_REPORT_ID    2
+
+/* Diagnose: loggt USB-Reports bei Tastenwechsel oder Pan-Wert (nicht bei reiner Bewegung).
+ * Nach der Fehlersuche auf 0 setzen. */
+#define DEBUG_REPORTS    0
+
+/* Mausrad-Kippen (Tilt) als Tasten -> horizontales Scrollen.
+ * Bitmasken der Tasten aus dem Log eintragen (Button n = 1 << (n-1)).
+ * 0 = aus. Beispiel: Button 14 = 0x2000, Button 15 = 0x4000 */
+#define TILT_LEFT_MASK   0x0000
+#define TILT_RIGHT_MASK  0x0000
+
+/* Nur noetig, falls das Kippen NICHT nativ als Pan ankommt (bei der G502 kommt es an -> 0).
+ * Sonst: Im G HUB Tilt links/rechts auf diese Tasten legen; die Firmware macht daraus
+ * horizontales Scrollen. (Scroll Lock = 0x47, Pause = 0x48, F13 = 0x68, F14 = 0x69) */
+#define TILT_LEFT_KEY    0
+#define TILT_RIGHT_KEY   0
+#define TILT_REPEAT_MS   100    // Wiederholrate, solange gekippt gehalten wird
+
+/* Experiment: Maus-Interface ausdruecklich auf Report-Protokoll stellen (evtl. laengere Reports).
+ * Bei Problemen mit der Mausbewegung wieder auf 0. */
+#define MOUSE_FORCE_REPORT_PROTOCOL 1
+
+/* ACHTUNG: set_protocol(BOOT) auf dem Tastatur-Interface schaltet bei der G502 offenbar das
+ * ganze Geraet (auch die Maus) in den Boot-Modus -> Maus nur noch 4 Byte, kein Pan/Tilt.
+ * Deshalb aus lassen (0). */
+#define KBD_FORCE_BOOT_PROTOCOL 0
 
 /* Akkustand ueber ADC (Spannungsteiler 100k/100k von Akku+ nach GND,
  * Mittelpunkt an diesen Pin + 100 nF nach GND). -1 = Akkuanzeige aus. */
@@ -123,15 +149,6 @@ static esp_err_t ble_send(uint8_t report_id, uint8_t *data, size_t len)
     return r;
 }
 
-/* Tastatur-Reports (z.B. G7/G8 -> Strg+Hoch/Runter) direkt durchreichen */
-static void on_kbd_report(const uint8_t *d, size_t len)
-{
-    if (len < 8) return;
-    uint8_t rep[8];
-    memcpy(rep, d, 8);
-    ble_send(KBD_REPORT_ID, rep, sizeof(rep));
-}
-
 /* ---------- Maus-Zustand (Akkumulator) ---------- */
 typedef struct {
     uint16_t buttons;     // aktueller Zustand
@@ -142,6 +159,8 @@ typedef struct {
 
 static mouse_state_t s_m;
 static portMUX_TYPE  s_lock = portMUX_INITIALIZER_UNLOCKED;
+static volatile int  s_tilt_dir = 0;   // -1 links, +1 rechts, 0 aus
+static volatile int  s_tilt_ms  = 0;
 
 static void on_mouse_report(const uint8_t *d, size_t len)
 {
@@ -163,11 +182,72 @@ static void on_mouse_report(const uint8_t *d, size_t len)
         return;
     }
 
+    uint16_t raw = b;
+
+#if DEBUG_REPORTS
+    {
+        static uint16_t last_b;
+        static int first = 10;                 // die ersten Reports immer zeigen (Format erkennen)
+        if (first > 0 || raw != last_b || p != 0) {
+            if (first > 0) first--;
+            ESP_LOGI(TAG, "USB-Report len=%u buttons=0x%04X wheel=%d pan=%d",
+                     (unsigned)len, raw, (int)w, (int)p);
+            ESP_LOG_BUFFER_HEX_LEVEL(TAG, d, len, ESP_LOG_INFO);
+            last_b = raw;
+        }
+    }
+#endif
+
+#if TILT_LEFT_MASK || TILT_RIGHT_MASK
+    {
+        static uint16_t prev_raw;
+        uint16_t pressed = raw & ~prev_raw;          // nur steigende Flanken
+        if (pressed & TILT_LEFT_MASK)  p -= 1;       // links
+        if (pressed & TILT_RIGHT_MASK) p += 1;       // rechts
+        prev_raw = raw;
+        b &= ~(TILT_LEFT_MASK | TILT_RIGHT_MASK);    // Tilt nicht zusaetzlich als Taste senden
+    }
+#endif
+
     portENTER_CRITICAL(&s_lock);
     s_m.buttons  = b;
     s_m.latched |= b;
     s_m.dx += x; s_m.dy += y; s_m.wheel += w; s_m.pan += p;
     portEXIT_CRITICAL(&s_lock);
+}
+
+/* Tastatur-Reports (z.B. G7/G8 -> Strg+Hoch/Runter) durchreichen.
+ * Tilt-Tasten (F13/F14) werden abgefangen und in horizontales Scrollen umgewandelt. */
+static void on_kbd_report(const uint8_t *d, size_t len)
+{
+#if DEBUG_REPORTS
+    ESP_LOGI("KBD", "Tastatur-Report len=%u", (unsigned)len);
+    ESP_LOG_BUFFER_HEX_LEVEL("KBD", d, len, ESP_LOG_INFO);
+#endif
+    // Report-Protokoll: 9 Byte = Report-ID (01) + Modifier, reserviert, 6 Tasten.
+    // Boot-Format hat 8 Byte ohne ID. Andere Laengen/IDs ignorieren.
+    const uint8_t *k;
+    if (len == 9 && d[0] == 0x01)  k = d + 1;
+    else if (len == 8)             k = d;
+    else return;
+    uint8_t rep[8];
+    memcpy(rep, k, 8);
+
+#if TILT_LEFT_KEY || TILT_RIGHT_KEY
+    int dir = 0;
+    for (int i = 2; i < 8; i++) {
+        if (TILT_LEFT_KEY  && rep[i] == TILT_LEFT_KEY)  { dir = -1; rep[i] = 0; }
+        if (TILT_RIGHT_KEY && rep[i] == TILT_RIGHT_KEY) { dir =  1; rep[i] = 0; }
+    }
+    if (dir != 0 && dir != s_tilt_dir) {         // neuer Tastendruck -> sofort ein Impuls
+        portENTER_CRITICAL(&s_lock);
+        s_m.pan += dir;
+        portEXIT_CRITICAL(&s_lock);
+        s_tilt_ms = 0;
+    }
+    s_tilt_dir = dir;
+#endif
+    ble_send(KBD_REPORT_ID, rep, sizeof(rep));
 }
 
 static inline int32_t clamp(int32_t v, int32_t lo, int32_t hi)
@@ -187,6 +267,18 @@ static void ble_sender_task(void *arg)
             portEXIT_CRITICAL(&s_lock);
             continue;
         }
+
+#if TILT_LEFT_KEY || TILT_RIGHT_KEY
+        if (s_tilt_dir != 0) {
+            s_tilt_ms += SEND_INTERVAL_MS;
+            if (s_tilt_ms >= TILT_REPEAT_MS) {
+                s_tilt_ms = 0;
+                portENTER_CRITICAL(&s_lock);
+                s_m.pan += s_tilt_dir;
+                portEXIT_CRITICAL(&s_lock);
+            }
+        }
+#endif
 
         int32_t dx, dy, w, p;
         uint16_t btn, prev_sent = 0;
@@ -348,6 +440,7 @@ static void hid_interface_cb(hid_host_device_handle_t dev,
         ESP_LOGW(TAG, "USB-Maus getrennt");
         hid_host_device_close(dev);
         if (proto == HID_PROTOCOL_KEYBOARD) {
+            s_tilt_dir = 0;
             uint8_t rel[8] = {0};
             ble_send(KBD_REPORT_ID, rel, sizeof(rel));   // alle Tasten loslassen
         } else {
@@ -397,14 +490,20 @@ static void hid_setup_task(void *arg)
             continue;
         }
 
+#if KBD_FORCE_BOOT_PROTOCOL
         if (p.proto == HID_PROTOCOL_KEYBOARD) {
-            // Boot-Protokoll erzwingen -> garantiert 8-Byte-Standardreport
             if (hid_class_request_set_protocol(dev, HID_REPORT_PROTOCOL_BOOT) != ESP_OK)
                 ESP_LOGW(TAG, "set_protocol(BOOT) fehlgeschlagen");
             if (hid_class_request_set_idle(dev, 0, 0) != ESP_OK)
                 ESP_LOGW(TAG, "set_idle fehlgeschlagen (unkritisch)");
         }
-        // Maus: KEIN Boot-Protokoll -> 16 Buttons und 16-Bit-Aufloesung bleiben erhalten
+#endif
+#if MOUSE_FORCE_REPORT_PROTOCOL
+        if (p.proto == HID_PROTOCOL_MOUSE) {
+            if (hid_class_request_set_protocol(dev, HID_REPORT_PROTOCOL_REPORT) != ESP_OK)
+                ESP_LOGW(TAG, "set_protocol(REPORT) fehlgeschlagen");
+        }
+#endif
 
         if (hid_host_device_start(dev) != ESP_OK) {
             ESP_LOGW(TAG, "Interface %d: start fehlgeschlagen", p.iface_num);

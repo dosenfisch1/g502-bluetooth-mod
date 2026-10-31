@@ -13,5 +13,5 @@
     "--query-driver=**",
     "--compile-commands-dir=c:\\Users\\Ndrs\\vscode\\maus\\build"
   ],
-  "idf.port": "COM5"
+  "idf.port": "COM3"
 }

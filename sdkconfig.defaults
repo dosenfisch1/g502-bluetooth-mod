@@ -15,5 +15,5 @@ CONFIG_BT_BLE_42_FEATURES_SUPPORTED=y
 CONFIG_ESP_CONSOLE_UART_DEFAULT=y
 
 # Optional zum Stromsparen (erst testen, ob USB + BLE stabil bleiben):
-# CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_80=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_80=y
 # 80 - 78mA, default - 79 mA
