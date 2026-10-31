@@ -7,22 +7,82 @@ Ein ESP32-S3 Super Mini sitzt als USB-Host in der Maus und gibt Maus und Tastatu
 per BLE an den PC weiter. Ein Schalter schaltet das Ganze ein und aus.
 
 ## Funktionen
-- Maus mit 16 Tasten, 16-Bit-Auflösung, Rad und horizontalem Scrollen
+- Maus mit 16 Tasten, 16-Bit-Auflösung, Rad und horizontalem Scrollen (Rad kippen)
 - G-Tasten als Tastatur, z. B. Strg+Bild hoch/runter für Tabwechsel
-  (Belegung muss im internen Speicher der Maus liegen, nicht nur im G-HUB-Profil)
+  (Belegung muss im G HUB im Modus **Integrierter Speicher** liegen)
 - Bewegungen werden gesammelt und alle 8 ms gesendet, kurze Klicks gehen nicht verloren
 - Akkustand über den BLE-Battery-Service (optional, ADC-Messung)
 - On-board-RGB-LED (GPIO48) wird beim Start ausgeschaltet
+- Hot-Plug: Maus lässt sich abstecken und wieder anstecken, die Firmware startet die Schnittstellen neu
 
-## Fertige Firmware
+## Fertige Firmware flashen
 Unter [Releases](https://github.com/dosenfisch1/g502-bluetooth-mod/releases) liegt `g502-ble-merged.bin`.
-Sie enthält Bootloader, Partitionstabelle und App und wird an Adresse `0x0` geflasht.
+Die Datei enthält Bootloader, Partitionstabelle und App und gehört an Adresse `0x0`.
 
-Geflasht wird über **UART** (GPIO43 = TX, GPIO44 = RX), weil der USB-C-Port der Maus gehört:
+Geflasht wird über **UART** (GPIO43 = TX, GPIO44 = RX), weil der USB-C-Port der Maus gehört.
+Du brauchst dafür einen 3,3-V-USB-UART-Adapter (CP2102, CH340 oder FTDI):
 
-    python -m esptool --chip esp32s3 -p COMx -b 460800 write_flash 0x0 g502-ble-merged.bin
+| Super Mini | Adapter |
+|------------|---------|
+| GPIO43 (TX) | RX |
+| GPIO44 (RX) | TX |
+| GND | GND |
 
-Download-Modus: BOOT gedrückt halten, RESET tippen, BOOT loslassen.
+Das Board versorgst du separat, nicht über den Adapter.
+
+    pip install esptool
+    python -m esptool --chip esp32s3 -p COM3 -b 460800 write_flash 0x0 g502-ble-merged.bin
+
+`COM3` durch den Port deines Adapters ersetzen. Download-Modus: BOOT gedrückt halten,
+RESET tippen, BOOT loslassen. Danach das Board einmal neu starten.
+
+Alternativ im Browser mit dem Esptool-JS-Webflasher von Espressif (Chrome oder Edge).
+
+Danach am PC in den Bluetooth-Einstellungen nach **G502 BLE** suchen und koppeln.
+
+## Das Firmware-Image selbst bauen
+
+### Mit einem Befehl (Ergebnis landet in `firmware/`)
+Im ESP-IDF-Terminal (VS Code: `F1` → **ESP-IDF: Open ESP-IDF Terminal**) im Projektordner:
+
+    powershell -ExecutionPolicy Bypass -File .\tools\build-firmware.ps1
+
+Das Skript baut das Projekt, führt Bootloader, Partitionstabelle und App zusammen und legt
+`firmware/g502-ble-merged.bin` ab (plus `firmware/g502-ble-app.bin`). Am Ende zeigt es
+Größe, SHA256 und den Flash-Befehl. Danach ins Repo:
+
+    git add firmware
+    git commit -m "Firmware-Image"
+    git push
+
+### Einzelne Schritte in VS Code
+1. Projekt bauen: `Strg+E B`
+2. `F1` → **ESP-IDF: Open ESP-IDF Terminal** (nur dort ist `esptool` bekannt)
+3. Im Terminal:
+
+       idf.py merge-bin
+
+   Ergebnis: `build/merged-binary.bin`. Das ist das fertige Image für Adresse `0x0`.
+
+Falls `merge-bin` nicht bekannt ist:
+
+    cd build
+    python -m esptool --chip esp32s3 merge_bin -o g502-ble-merged.bin "@flash_args"
+
+Die Anführungszeichen um `@flash_args` sind in PowerShell nötig.
+
+Zum normalen Entwickeln reicht `Strg+E F` (Flash über UART), das Image brauchst du nur zum Weitergeben.
+
+### Automatisch über GitHub
+Der Workflow `.github/workflows/build.yml` baut bei jedem Push mit ESP-IDF 5.5.6 und legt
+die Dateien unter **Actions → Artifacts** ab. Ein Release mit angehängter `g502-ble-merged.bin`
+entsteht, sobald du einen Tag pushst:
+
+    git tag v1.1
+    git push origin v1.1
+
+Der Workflow baut mit `sdkconfig.defaults`. Einstellungen aus `menuconfig` mit
+`idf.py save-defconfig` dorthin übernehmen, sonst fehlen sie im GitHub-Build.
 
 ## Hardware
 | Teil | Hinweis |
@@ -49,30 +109,32 @@ Akkumessung: Schalter-Ausgang ── 100k ──┬── 100k ── GND
                                         └── GPIO1 (+ 100 nF nach GND)
 ```
 Ohne Spannungsteiler in `main/main.c` `BATTERY_ADC_GPIO` auf `-1` setzen.
+Die Anzeige rechnet mit `BATTERY_DIV_RATIO`. Bei Abweichung per Multimeter nachkalibrieren.
 
-## Selbst bauen (VS Code + ESP-IDF 5.5)
-1. Ordner öffnen, `F1` → *ESP-IDF: Set Espressif Device Target* → `esp32s3`
-2. `F1` → *ESP-IDF: Select Port to Use* → COM-Port des UART-Adapters
-3. Build `Strg+E B`, Flash `Strg+E F`, Monitor `Strg+E M`
+## Technische Hinweise
+- Die G502 hat drei HID-Interfaces: Maus (0), Tastatur (1, G-Tasten) und HID++ (2, Konfiguration).
+  Die Firmware nutzt die ersten beiden.
+- **Kein Boot-Protokoll auf dem Tastatur-Interface setzen.** `set_protocol(BOOT)` schaltet bei der G502
+  das ganze Gerät um: Die Maus sendet dann nur noch 4-Byte-Reports ohne Kippen und mit 8 Bit.
+  Im Report-Protokoll liefert die Maus 8 Byte (16 Tasten, 16-Bit X/Y, Rad, Pan), die Tastatur 9 Byte
+  (Report-ID 1, Modifier, reserviert, 6 Tasten). Die Firmware schneidet die ID der Tastatur ab.
+- Das Kippen des Rads kommt nativ als Pan-Wert an und wird direkt weitergeleitet.
+- Die Interfaces werden in einem eigenen Task geöffnet. Der HID-Host-Callback darf nicht blockieren,
+  sonst laufen Control-Transfers in einen Timeout.
+- Verbindungsintervall: Die Firmware bittet den PC um 7,5 bis 10 ms. Unter Windows stellt sich 7,5 ms ein.
+  Sendeintervall 8 ms (`SEND_INTERVAL_MS`). Kürzere Werte lassen die Maus hüpfen, weil mehrere Reports
+  gebündelt ankommen.
 
-`esp_hid_gap.c/.h` werden beim ersten Build aus dem ESP-IDF-Beispiel kopiert,
-`usb_host_hid` und `led_strip` lädt der Komponentenmanager.
-
-Zusammengeführtes Image selbst erzeugen (im ESP-IDF-Terminal):
-
-    idf.py merge-bin
-
-## Hinweise
+## Hinweise zum Betrieb
 - Während der Maus-Betrieb läuft, darf am USB-C-Port des ESP kein PC-Kabel stecken.
   Debugging über den eingebauten USB-JTAG ist ebenfalls nicht möglich.
 - Nach Änderungen am HID-Report-Aufbau das Gerät unter Windows entfernen und neu koppeln.
   Hilft das nicht: *ESP-IDF: Erase Flash* und neu flashen.
-- Einstellungen aus `menuconfig` mit `idf.py save-defconfig` nach `sdkconfig.defaults`
-  übernehmen, sonst fehlen sie im GitHub-Build (`sdkconfig` liegt nicht im Repo).
+- Zum Debuggen `DEBUG_REPORTS` in `main/main.c` auf `1` setzen. Dann erscheinen USB-Reports im Log.
 
 ## Einschränkungen
-- BLE erreicht keine 1000 Hz, der PC bestimmt das Verbindungsintervall (meist 7,5 bis 15 ms).
-  Für Büro und Alltag gut, für kompetitives Gaming nicht gedacht.
+- BLE erreicht keine 1000 Hz. Real sind es etwa 110 bis 125 Reports pro Sekunde. Für Büro und Alltag gut,
+  für kompetitives Gaming nicht gedacht.
 - Die Laufzeit hängt vor allem von Maus-Sensor und Beleuchtung ab. RGB aus spart am meisten.
 
 ## Haftung
