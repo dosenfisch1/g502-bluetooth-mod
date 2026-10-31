@@ -18,6 +18,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "freertos/queue.h"
+#include "led_strip.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
@@ -39,6 +41,7 @@ static const char *TAG = "G502_BLE";
 
 /* Akkustand ueber ADC (Spannungsteiler 100k/100k von Akku+ nach GND,
  * Mittelpunkt an diesen Pin + 100 nF nach GND). -1 = Akkuanzeige aus. */
+#define STATUS_LED_GPIO    48        // On-board WS2812 des Super Mini; -1 = nicht anfassen
 #define BATTERY_ADC_GPIO   1
 #define BATTERY_DIV_RATIO  2.0f      // (R1+R2)/R2, bei Abweichung per Multimeter nachkalibrieren
 
@@ -361,36 +364,55 @@ static void hid_interface_cb(hid_host_device_handle_t dev,
     }
 }
 
+static QueueHandle_t s_hid_connect_q;
+
+/* Dieser Callback laeuft im HID-Host-Task. Control-Transfers (set_protocol usw.)
+ * brauchen genau diesen Task zum Abschluss -> hier NICHT blockieren, nur weiterreichen. */
 static void hid_device_cb(hid_host_device_handle_t dev,
                           const hid_host_driver_event_t event, void *arg)
 {
-    if (event != HID_HOST_DRIVER_EVENT_CONNECTED) return;
-
-    hid_host_dev_params_t p;
-    ESP_ERROR_CHECK(hid_host_device_get_params(dev, &p));
-    ESP_LOGI(TAG, "HID-Interface %d: subclass=%d proto=%d", p.iface_num, p.sub_class, p.proto);
-
-    // Maus (Interface 0) und Tastatur (Interface 1, G-Tasten-Makros) nutzen.
-    // Das HID++-Interface (Konfiguration) wird ignoriert.
-    if (p.proto != HID_PROTOCOL_MOUSE && p.proto != HID_PROTOCOL_KEYBOARD) return;
-
-    const hid_host_device_config_t cfg = {
-        .callback = hid_interface_cb,
-        .callback_arg = (void *)(uintptr_t)p.proto
-    };
-    ESP_ERROR_CHECK(hid_host_device_open(dev, &cfg));
-
-    if (p.proto == HID_PROTOCOL_KEYBOARD) {
-        // Boot-Protokoll erzwingen -> garantiert 8-Byte-Standardreport
-        if (hid_class_request_set_protocol(dev, HID_REPORT_PROTOCOL_BOOT) != ESP_OK)
-            ESP_LOGW(TAG, "set_protocol(BOOT) fehlgeschlagen");
-        if (hid_class_request_set_idle(dev, 0, 0) != ESP_OK)
-            ESP_LOGW(TAG, "set_idle fehlgeschlagen (unkritisch)");
+    if (event == HID_HOST_DRIVER_EVENT_CONNECTED) {
+        xQueueSend(s_hid_connect_q, &dev, 0);
     }
-    // Maus: KEIN Boot-Protokoll -> 16 Buttons und 16-Bit-Aufloesung bleiben erhalten
-    ESP_ERROR_CHECK(hid_host_device_start(dev));
-    ESP_LOGI(TAG, "%s-Interface gestartet",
-             p.proto == HID_PROTOCOL_KEYBOARD ? "Tastatur" : "Maus");
+}
+
+static void hid_setup_task(void *arg)
+{
+    hid_host_device_handle_t dev;
+    while (xQueueReceive(s_hid_connect_q, &dev, portMAX_DELAY)) {
+        hid_host_dev_params_t p;
+        if (hid_host_device_get_params(dev, &p) != ESP_OK) continue;
+        ESP_LOGI(TAG, "HID-Interface %d: subclass=%d proto=%d", p.iface_num, p.sub_class, p.proto);
+
+        // Maus (Interface 0) und Tastatur (Interface 1, G-Tasten) nutzen,
+        // das HID++-Interface (Konfiguration) ignorieren.
+        if (p.proto != HID_PROTOCOL_MOUSE && p.proto != HID_PROTOCOL_KEYBOARD) continue;
+
+        const hid_host_device_config_t cfg = {
+            .callback = hid_interface_cb,
+            .callback_arg = (void *)(uintptr_t)p.proto
+        };
+        if (hid_host_device_open(dev, &cfg) != ESP_OK) {
+            ESP_LOGW(TAG, "Interface %d: open fehlgeschlagen", p.iface_num);
+            continue;
+        }
+
+        if (p.proto == HID_PROTOCOL_KEYBOARD) {
+            // Boot-Protokoll erzwingen -> garantiert 8-Byte-Standardreport
+            if (hid_class_request_set_protocol(dev, HID_REPORT_PROTOCOL_BOOT) != ESP_OK)
+                ESP_LOGW(TAG, "set_protocol(BOOT) fehlgeschlagen");
+            if (hid_class_request_set_idle(dev, 0, 0) != ESP_OK)
+                ESP_LOGW(TAG, "set_idle fehlgeschlagen (unkritisch)");
+        }
+        // Maus: KEIN Boot-Protokoll -> 16 Buttons und 16-Bit-Aufloesung bleiben erhalten
+
+        if (hid_host_device_start(dev) != ESP_OK) {
+            ESP_LOGW(TAG, "Interface %d: start fehlgeschlagen", p.iface_num);
+            continue;
+        }
+        ESP_LOGI(TAG, "%s-Interface gestartet",
+                 p.proto == HID_PROTOCOL_KEYBOARD ? "Tastatur" : "Maus");
+    }
 }
 
 static void usb_lib_task(void *arg)
@@ -411,8 +433,24 @@ static void usb_lib_task(void *arg)
     }
 }
 
+#if STATUS_LED_GPIO >= 0
+static led_strip_handle_t s_led;   // Handle behalten, damit die Datenleitung nicht floatet
+
+static void led_off(void)
+{
+    led_strip_config_t strip_cfg = { .strip_gpio_num = STATUS_LED_GPIO, .max_leds = 1 };
+    led_strip_rmt_config_t rmt_cfg = { .resolution_hz = 10 * 1000 * 1000 };
+    if (led_strip_new_rmt_device(&strip_cfg, &rmt_cfg, &s_led) == ESP_OK) {
+        led_strip_clear(s_led);
+    }
+}
+#endif
+
 void app_main(void)
 {
+#if STATUS_LED_GPIO >= 0
+    led_off();
+#endif
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -439,6 +477,9 @@ void app_main(void)
     xTaskCreatePinnedToCore(usb_lib_task, "usb_lib", 4096,
                             xTaskGetCurrentTaskHandle(), 2, NULL, 1);   // Core 1
     ulTaskNotifyTake(pdFALSE, portMAX_DELAY);
+
+    s_hid_connect_q = xQueueCreate(8, sizeof(hid_host_device_handle_t));
+    xTaskCreate(hid_setup_task, "hid_setup", 4096, NULL, 4, NULL);
 
     const hid_host_driver_config_t hid_cfg = {
         .create_background_task = true,

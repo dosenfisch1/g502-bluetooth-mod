@@ -572,6 +572,17 @@ static void ble_gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_p
             ESP_LOGE(TAG, "BLE GAP AUTH ERROR: 0x%x", param->ble_security.auth_cmpl.fail_reason);
         } else {
             ESP_LOGI(TAG, "BLE GAP AUTH SUCCESS");
+
+            esp_ble_conn_update_params_t cp = {0};
+            memcpy(cp.bda, param->ble_security.auth_cmpl.bd_addr, sizeof(esp_bd_addr_t));
+            cp.min_int = 0x06;
+            cp.max_int = 0x0C;
+            cp.latency = 4;
+            cp.timeout = 400;
+            esp_err_t ret = esp_ble_gap_update_conn_params(&cp);
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "esp_ble_gap_update_conn_params failed: %s", esp_err_to_name(ret));
+            }
         }
         break;
 
@@ -604,6 +615,14 @@ static void ble_gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_p
         // Send the positive(true) security response to the peer device to accept the security request.
         // If not accept the security request, should send the security response with negative(false) accept value.
         esp_ble_gap_security_rsp(param->ble_security.ble_req.bd_addr, true);
+        break;
+
+    case ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT:
+        ESP_LOGI(TAG, "Conn-Params: status=%d interval=%d (x1,25 ms) latency=%d timeout=%d",
+                 param->update_conn_params.status,
+                 param->update_conn_params.conn_int,
+                 param->update_conn_params.latency,
+                 param->update_conn_params.timeout);
         break;
 
     default:

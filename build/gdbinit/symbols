@@ -17,4 +17,4 @@ set confirm off
 set confirm on
 
 # Load application symbols
-file C:/Users/Ndrs/vscode/maus/build/g502_ble.elf
+file C:/Users/Ndrs/vscode/maus/build/maus.elf

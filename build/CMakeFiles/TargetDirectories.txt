@@ -10,7 +10,7 @@ C:/Users/Ndrs/vscode/maus/build/CMakeFiles/monitor.dir
 C:/Users/Ndrs/vscode/maus/build/CMakeFiles/flash.dir
 C:/Users/Ndrs/vscode/maus/build/CMakeFiles/encrypted-flash.dir
 C:/Users/Ndrs/vscode/maus/build/CMakeFiles/_project_elf_src.dir
-C:/Users/Ndrs/vscode/maus/build/CMakeFiles/g502_ble.elf.dir
+C:/Users/Ndrs/vscode/maus/build/CMakeFiles/maus.elf.dir
 C:/Users/Ndrs/vscode/maus/build/CMakeFiles/size.dir
 C:/Users/Ndrs/vscode/maus/build/CMakeFiles/size-files.dir
 C:/Users/Ndrs/vscode/maus/build/CMakeFiles/size-components.dir
@@ -899,6 +899,13 @@ C:/Users/Ndrs/vscode/maus/build/esp-idf/wifi_provisioning/CMakeFiles/list_instal
 C:/Users/Ndrs/vscode/maus/build/esp-idf/wifi_provisioning/CMakeFiles/install.dir
 C:/Users/Ndrs/vscode/maus/build/esp-idf/wifi_provisioning/CMakeFiles/install/local.dir
 C:/Users/Ndrs/vscode/maus/build/esp-idf/wifi_provisioning/CMakeFiles/install/strip.dir
+C:/Users/Ndrs/vscode/maus/build/esp-idf/espressif__led_strip/CMakeFiles/__idf_espressif__led_strip.dir
+C:/Users/Ndrs/vscode/maus/build/esp-idf/espressif__led_strip/CMakeFiles/edit_cache.dir
+C:/Users/Ndrs/vscode/maus/build/esp-idf/espressif__led_strip/CMakeFiles/rebuild_cache.dir
+C:/Users/Ndrs/vscode/maus/build/esp-idf/espressif__led_strip/CMakeFiles/list_install_components.dir
+C:/Users/Ndrs/vscode/maus/build/esp-idf/espressif__led_strip/CMakeFiles/install.dir
+C:/Users/Ndrs/vscode/maus/build/esp-idf/espressif__led_strip/CMakeFiles/install/local.dir
+C:/Users/Ndrs/vscode/maus/build/esp-idf/espressif__led_strip/CMakeFiles/install/strip.dir
 C:/Users/Ndrs/vscode/maus/build/esp-idf/espressif__usb_host_hid/CMakeFiles/__idf_espressif__usb_host_hid.dir
 C:/Users/Ndrs/vscode/maus/build/esp-idf/espressif__usb_host_hid/CMakeFiles/edit_cache.dir
 C:/Users/Ndrs/vscode/maus/build/esp-idf/espressif__usb_host_hid/CMakeFiles/rebuild_cache.dir

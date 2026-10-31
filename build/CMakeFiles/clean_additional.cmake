@@ -14,10 +14,10 @@ if("${CONFIG}" STREQUAL "" OR "${CONFIG}" STREQUAL "")
   "flash_bootloader_args"
   "flash_project_args"
   "flasher_args.json"
-  "g502_ble.bin"
-  "g502_ble.map"
   "ldgen_libraries"
   "ldgen_libraries.in"
+  "maus.bin"
+  "maus.map"
   "project_elf_src_esp32s3.c"
   "x509_crt_bundle.S"
   )
