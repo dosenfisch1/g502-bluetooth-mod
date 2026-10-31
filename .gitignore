@@ -1,0 +1,9 @@
+# Build-Artefakte und lokale Dateien (werden automatisch erzeugt)
+build/
+managed_components/
+sdkconfig
+sdkconfig.old
+.clangd
+.cache/
+# Fremder Pfad, der versehentlich eingecheckt wurde
+mnt/
