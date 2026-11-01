@@ -2,9 +2,40 @@
 
 [![Build](https://github.com/dosenfisch1/g502-bluetooth-mod/actions/workflows/build.yml/badge.svg)](https://github.com/dosenfisch1/g502-bluetooth-mod/actions/workflows/build.yml)
 
-Macht aus einer kabelgebundenen **Logitech G502** eine Bluetooth-LE-Maus, ohne Dongle.
-Ein ESP32-S3 Super Mini sitzt als USB-Host in der Maus und gibt Maus und Tastatur (G-Tasten)
-per BLE an den PC weiter. Ein Schalter schaltet das Ganze ein und aus.
+Macht aus einer **Logitech G502** (HERO) eine Bluetooth-LE-Maus, ohne Dongle.
+Ein ESP32-S3 Super Mini arbeitet als USB-Host, liest die Maus über USB aus und gibt Maus und
+Tastatur (G-Tasten) per BLE an den PC weiter. Gedacht war ein Einbau in die Maus mit Schalter.
+
+## Projektstatus: pausiert
+**Die Firmware funktioniert.** Getestet mit einer G502 Lightspeed, die per Kabel am ESP hängt.
+Der geplante Einbau in die Maus ist **nicht abgeschlossen**.
+
+**Offenes Problem:** Die G502 Lightspeed hat einen eigenen Akku und läuft ohne Spannung an VBUS
+im Funkmodus. Der ESP kann sie dann nicht per USB auslesen. Gemessen:
+- ohne VBUS: Maus bleibt im Funkmodus, auch bei angeschlossenen D+/D−
+- 3,3 V an VBUS: keine Reaktion
+- 3,8 V (Akkuspannung) an VBUS: Maus erkennt USB, lädt dabei aber ihren internen Akku
+
+Gewünscht war, den USB-Modus ohne Step-up und ohne Laden des internen Akkus auszulösen, und
+die Maus soll bei ausgeschaltetem ESP weiter normal per USB laufen. Dafür habe ich keinen Weg
+mit vertretbarem Aufwand gefunden, daher ruht das Projekt.
+
+**Bei der kabelgebundenen G502 (HERO) tritt das Problem nicht auf.** Sie hat keinen Akku und ist
+immer im USB-Modus, sobald sie 5 V bekommt. Dort bleibt nur die 5-V-Versorgung über einen
+Boost-Wandler (siehe Hardware).
+
+### Ideen zum Weitermachen (ungetestet)
+Das sind Hypothesen, keine geprüften Lösungen:
+1. **Akku direkt auf VBUS.** Liegen VBUS und der interne Akku an derselben Zelle, hat der Lader
+   vermutlich keinen Spannungsabstand und lädt nicht, die Erkennung könnte trotzdem ansprechen.
+   Test: mA-Meter mit Sicherung zwischen Akku+ und VBUS-Pad der Micro-USB-Buchse, dann Strom messen.
+2. **Ideal-Diode mit Enable** (z. B. TI LM66100, Datenblatt prüfen) zwischen Akku und VBUS. Sie
+   sperrt den Rückstrom, wenn ein PC-Kabel 5 V liefert. Den Enable-Pin kann der ESP schalten.
+   Die Firmware hat dafür die Option `MOUSE_VBUS_EN_GPIO` (Standard `-1`, aus).
+3. **Analogschalter für D+/D−** (z. B. TS3USB221A oder FSUSB42), damit der unbestromte ESP die
+   Datenleitungen bei Kabelbetrieb nicht stört. Auf Sperren bei VCC = 0 im Datenblatt achten.
+4. **Erkennungspunkt der VBUS-Erkennung auf der Platine finden** und dort nur das Signal auslösen.
+   Dazu fehlen Schaltplan und lesbare Bauteilaufdrucke.
 
 ## Funktionen
 - Maus mit 16 Tasten, 16-Bit-Auflösung, Rad und horizontalem Scrollen (Rad kippen)
@@ -91,7 +122,7 @@ Der Workflow baut mit `sdkconfig.defaults`. Einstellungen aus `menuconfig` mit
 | LiPo 1S mit Schutzschaltung | Platz in der Maus beachten |
 | Ladeplatine (MCP73831 oder TP4056 mit Schutz) | hängt vor dem Schalter am Akku |
 | Schiebeschalter (≥ 1 A) | zwischen Akku+ und Boost-Wandler |
-| 5-V-Boost-Wandler (≥ 1 A) | versorgt Maus und ESP |
+| 5-V-Boost-Wandler (≥ 1 A) | versorgt Maus und ESP (kabelgebundene G502 HERO) |
 | 2 × 100 kΩ + 100 nF | Akkumessung an GPIO1 |
 
 ### Verkabelung
@@ -108,6 +139,7 @@ LiPo ── Ladeplatine ── Schalter ── Boost 5 V ──┬── Maus
 Akkumessung: Schalter-Ausgang ── 100k ──┬── 100k ── GND
                                         └── GPIO1 (+ 100 nF nach GND)
 ```
+Bei der G502 Lightspeed liegt VBUS stattdessen an einer Spannung ≥ ca. 3,8 V (siehe Projektstatus).
 Ohne Spannungsteiler in `main/main.c` `BATTERY_ADC_GPIO` auf `-1` setzen.
 Die Anzeige rechnet mit `BATTERY_DIV_RATIO`. Bei Abweichung per Multimeter nachkalibrieren.
 
@@ -133,6 +165,7 @@ Die Anzeige rechnet mit `BATTERY_DIV_RATIO`. Bei Abweichung per Multimeter nachk
 - Zum Debuggen `DEBUG_REPORTS` in `main/main.c` auf `1` setzen. Dann erscheinen USB-Reports im Log.
 
 ## Einschränkungen
+- Aufbau in der Maus nicht abgeschlossen, siehe Projektstatus.
 - BLE erreicht keine 1000 Hz. Real sind es etwa 110 bis 125 Reports pro Sekunde. Für Büro und Alltag gut,
   für kompetitives Gaming nicht gedacht.
 - Die Laufzeit hängt vor allem von Maus-Sensor und Beleuchtung ab. RGB aus spart am meisten.
