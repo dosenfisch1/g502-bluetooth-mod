@@ -23,6 +23,7 @@
 #include "esp_adc/adc_oneshot.h"
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
+#include "driver/gpio.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
 
@@ -41,7 +42,7 @@ static const char *TAG = "G502_BLE";
 
 /* Diagnose: loggt USB-Reports bei Tastenwechsel oder Pan-Wert (nicht bei reiner Bewegung).
  * Nach der Fehlersuche auf 0 setzen. */
-#define DEBUG_REPORTS    0
+#define DEBUG_REPORTS    1
 
 /* Mausrad-Kippen (Tilt) als Tasten -> horizontales Scrollen.
  * Bitmasken der Tasten aus dem Log eintragen (Button n = 1 << (n-1)).
@@ -67,6 +68,11 @@ static const char *TAG = "G502_BLE";
 
 /* Akkustand ueber ADC (Spannungsteiler 100k/100k von Akku+ nach GND,
  * Mittelpunkt an diesen Pin + 100 nF nach GND). -1 = Akkuanzeige aus. */
+/* Optional: GPIO, das den VBUS-Trenner der Maus (z.B. Ideal-Diode mit Enable-Pin) einschaltet,
+ * sobald der ESP laeuft. Dann schaltet die Maus in den USB-Modus. Bei ausgeschaltetem ESP bleibt
+ * der Trenner offen und die Maus laesst sich normal per USB betreiben. -1 = nicht benutzt. */
+#define MOUSE_VBUS_EN_GPIO  -1       // z.B. 12
+
 #define STATUS_LED_GPIO    48        // On-board WS2812 des Super Mini; -1 = nicht anfassen
 #define BATTERY_ADC_GPIO   1
 #define BATTERY_DIV_RATIO  2.0f      // (R1+R2)/R2, bei Abweichung per Multimeter nachkalibrieren
@@ -589,6 +595,17 @@ void app_main(void)
         .callback_arg = NULL
     };
     ESP_ERROR_CHECK(hid_host_install(&hid_cfg));
+
+#if MOUSE_VBUS_EN_GPIO >= 0
+    // Erst jetzt VBUS freigeben: der USB-Host-Stack ist bereit, die Maus kann sich melden
+    gpio_config_t vbus_io = {
+        .pin_bit_mask = 1ULL << MOUSE_VBUS_EN_GPIO,
+        .mode = GPIO_MODE_OUTPUT,
+    };
+    ESP_ERROR_CHECK(gpio_config(&vbus_io));
+    ESP_ERROR_CHECK(gpio_set_level(MOUSE_VBUS_EN_GPIO, 1));
+    ESP_LOGI(TAG, "VBUS fuer Maus eingeschaltet (GPIO %d)", MOUSE_VBUS_EN_GPIO);
+#endif
 
     ESP_LOGI(TAG, "Bereit: Maus an USB anstecken, am PC nach \"%s\" koppeln", s_hid_config.device_name);
 }

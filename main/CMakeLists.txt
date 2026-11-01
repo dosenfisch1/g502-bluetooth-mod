@@ -13,5 +13,5 @@ endforeach()
 idf_component_register(
     SRCS "main.c" "esp_hid_gap.c"
     INCLUDE_DIRS "."
-    PRIV_REQUIRES esp_hid bt nvs_flash usb esp_adc
+    PRIV_REQUIRES esp_hid bt nvs_flash usb esp_adc esp_driver_gpio
 )

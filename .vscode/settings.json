@@ -1,7 +1,9 @@
 {
   "idf.flashType": "UART",
   "idf.adapterTargetName": "esp32s3",
-  "idf.openOcdConfigs": [],
+  "idf.openOcdConfigs": [
+    "board/esp32s3-builtin.cfg"
+  ],
   "C_Cpp.default.configurationProvider": "espressif.esp-idf-extension",
   "idf.currentSetup": "C:\\esp\\v5.5.6\\esp-idf",
   "idf.customExtraVars": {
@@ -13,5 +15,5 @@
     "--query-driver=**",
     "--compile-commands-dir=c:\\Users\\Ndrs\\vscode\\maus\\build"
   ],
-  "idf.port": "COM3"
+  "idf.port": "COM5"
 }
